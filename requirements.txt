@@ -1,0 +1,21 @@
+# Numerical computing and filters
+numpy
+scipy
+# Reading and writing audio files (WAV, FLAC, OGG, ...)
+soundfile
+# High-quality resampling
+soxr
+# Audio features (mel, MFCC) and silence detection
+librosa
+# Loudness measurement and normalization (LUFS)
+pyloudnorm
+# Noise reduction
+noisereduce
+# Graphical interface
+PySide6
+# Config files
+pyyaml
+# Charts in the quality report
+matplotlib
+# Tests
+pytest

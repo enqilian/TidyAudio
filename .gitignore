@@ -1,0 +1,29 @@
+# Python environments (recreate with: pip install -r requirements.txt)
+.venv/
+.venv-*/
+venv/
+env/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# App builds (recreate with: bash packaging/build_mac.sh arm|intel)
+build/
+dist/
+packaging/icon_1024.png
+packaging/*.iconset/
+
+# Editors and operating system
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+
+# Tool caches
+.ruff_cache/

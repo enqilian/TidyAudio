@@ -1,0 +1,13 @@
+# Versions pinned for building the macOS app (both Apple Silicon and Intel),
+# so the app runs on macOS 12 and newer.
+#
+# Newer numba / llvmlite releases have no prebuilt packages for Intel Macs,
+# so pip would try (and fail) to compile them. Pin the last versions that have them.
+numba==0.62.1
+llvmlite==0.45.1
+# PySide6 6.10 and newer require macOS 14+, which many Intel Macs cannot run.
+# PySide6 6.9 supports macOS 12+.
+PySide6==6.9.3
+PySide6-Essentials==6.9.3
+PySide6-Addons==6.9.3
+shiboken6==6.9.3
