@@ -34,7 +34,7 @@ def test_lufs_method(make_clip):
     clip = make_clip(seconds=3.0, amplitude=0.05, sr=16000, channels=1)
     REGISTRY["normalize"](method="lufs", target_lufs=-23.0).apply(clip)
     assert lufs(clip) == pytest.approx(-23.0, abs=0.1)
-    assert "loudness_before_lufs" in clip.info
+    assert clip.info["normalize_after"] == pytest.approx(-23.0, abs=0.01)
 
 
 def test_lufs_quiet_and_loud_end_up_equal(make_clip):

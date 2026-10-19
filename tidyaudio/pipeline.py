@@ -18,8 +18,8 @@
   │   └── README.txt      这个数据集是怎么处理出来的
   ├── features/       特征文件（勾选了特征提取才有），每条音频一个 .npz
   ├── manifest.csv    每条输出音频一行：路径、时长、采样率、各项检查结果……
-  ├── dropped.csv     被丢掉的文件和原因
-  ├── processing_steps.csv  做了哪些处理：顺序、参数、每一步处理/丢掉了多少条
+  ├── dropped.csv     被丢掉的文件：哪一步丢的、原因
+  ├── processing_steps.csv  做了哪些处理：顺序、参数、每一步处理/丢掉了多少条、时长变化
   ├── report.html     质量报告，用浏览器打开
   ├── scripts/        用到的自定义脚本的副本（用了才有），以后脚本改了也能找到当时的版本
   └── config.yaml     这次用的全部设置，可以直接加载、重新跑一遍
@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Callable
 
 import numpy as np
+import soundfile as sf
 import yaml
 
 from . import __version__
@@ -271,9 +272,10 @@ def _run(config: PipelineConfig, steps: list[Step], start_time: float,
 
     summary = RunSummary(output_dir=out_dir, input_count=len(files))
     kept_rows: list[dict] = []
-    # 每个功能的统计：处理了多少条、留下多少条、丢掉多少条
-    step_stats = {s.key: {"in": 0, "out": 0, "dropped": 0} for s in steps}
-    load_stats = {"in": 0, "out": 0, "dropped": 0}   # "读取文件"这一步
+    # 每个功能的统计：处理了多少条、留下多少条、丢掉多少条，进出的总时长（秒）
+    step_stats = {s.key: {"in": 0, "out": 0, "dropped": 0, "sec_in": 0.0, "sec_out": 0.0}
+                  for s in steps}
+    load_stats = {"in": 0, "out": 0, "dropped": 0, "sec_in": 0.0, "sec_out": 0.0}   # "读取文件"
     dropped_rows: list[dict] = []
     used_paths: set[Path] = set()
 
@@ -294,20 +296,27 @@ def _run(config: PipelineConfig, steps: list[Step], start_time: float,
                 orig_sample_rate=clip.sr,
                 orig_channels=clip.channels,
                 orig_duration_sec=round(clip.duration, 3),
+                orig_subtype=clip.subtype,
             )
+            load_stats["sec_out"] += clip.duration
+            load_stats["sec_in"] += clip.duration
         except Exception as e:
             load_stats["dropped"] += 1
-            dropped_rows.append({"source": rel, "reason": f"Could not read: {e}"})
+            dropped_rows.append({"source": rel, "step": "Read files",
+                                 "reason": f"Could not read: {e}"})
             _report(progress, i + 1, len(files), rel)
             continue
 
         # 2. 依次经过每个功能
         clips, dropped = _apply_steps(steps, clip, step_stats)
         for c in dropped:
+            info = {k: v for k, v in c.info.items() if k not in ("dropped_reason", "dropped_step")}
             dropped_rows.append({
                 "source": rel,
                 "segment": c.name if c.name != path.stem else "",
+                "step": c.info.get("dropped_step", ""),
                 "reason": c.info.get("dropped_reason", ""),
+                **info,   # 被丢掉之前测到的信息（原始格式、时长等），报告里统计用
             })
 
         # 3. 保存
@@ -321,6 +330,7 @@ def _run(config: PipelineConfig, steps: list[Step], start_time: float,
                 "duration_sec": round(c.duration, 3),
                 "sample_rate": c.sr,
                 "channels": c.channels,
+                "subtype": sf.info(audio_path).subtype,   # 实际保存的位深格式
                 # 输出音频的电平：峰值和平均能量（dBFS）
                 "peak_dbfs": round(to_db(peak(c.audio)), 2),
                 "rms_dbfs": round(to_db(rms(c.audio)), 2),
@@ -356,7 +366,8 @@ def _run(config: PipelineConfig, steps: list[Step], start_time: float,
                   csv_result, csv_table.footer if csv_path else [], scripts)
 
     _write_csv(out_dir / "manifest.csv", kept_rows)
-    _write_csv(out_dir / "dropped.csv", dropped_rows, default_fields=["source", "segment", "reason"])
+    _write_csv(out_dir / "dropped.csv", dropped_rows,
+               default_fields=["source", "segment", "step", "reason"])
     _write_csv(out_dir / "processing_steps.csv", step_rows,
                default_fields=STEP_FIELDS)
     # 保存时把默认值也一起写进去：以后就算改了某个默认值，
@@ -401,24 +412,29 @@ def _apply_steps(steps: list[Step], clip: Clip,
                 c.info["dropped_reason"] = f"{step.label} failed: {type(e).__name__}: {e}"
                 out = []
             if not out:
+                c.info.setdefault("dropped_step", step.label)
                 dropped.append(c)
                 stats[step.key]["dropped"] += 1
             next_alive.extend(out)
         stats[step.key]["in"] += len(alive)
         stats[step.key]["out"] += len(next_alive)
+        stats[step.key]["sec_in"] += sum(c.duration for c in alive)
+        stats[step.key]["sec_out"] += sum(c.duration for c in next_alive)
         alive = next_alive
         if not alive:
             break
     return alive, dropped
 
 
-STEP_FIELDS = ["step", "name", "parameters", "input", "output", "dropped"]
+STEP_FIELDS = ["step", "name", "parameters", "input", "output", "dropped",
+               "input_sec", "output_sec"]
 
 
 def _step_rows(steps: list[Step], stats: dict, load: dict) -> list[dict]:
     """processing_steps.csv 的内容：第 0 行是读取文件，之后每个功能一行。"""
     rows = [{"step": 0, "name": "Read files", "parameters": "",
-             "input": load["in"], "output": load["out"], "dropped": load["dropped"]}]
+             "input": load["in"], "output": load["out"], "dropped": load["dropped"],
+             "input_sec": round(load["sec_in"], 3), "output_sec": round(load["sec_out"], 3)}]
     for i, step in enumerate(steps, start=1):
         st = stats[step.key]
         if isinstance(step, CustomScript):
@@ -428,7 +444,8 @@ def _step_rows(steps: list[Step], stats: dict, load: dict) -> list[dict]:
             params = "; ".join(f"{p.label} = {step.values[p.name]}"
                                for p in step.params if p.is_active(step.values))
         rows.append({"step": i, "name": step.label, "parameters": params,
-                     "input": st["in"], "output": st["out"], "dropped": st["dropped"]})
+                     "input": st["in"], "output": st["out"], "dropped": st["dropped"],
+                     "input_sec": round(st["sec_in"], 3), "output_sec": round(st["sec_out"], 3)})
     return rows
 
 

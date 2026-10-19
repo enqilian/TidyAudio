@@ -114,8 +114,10 @@ class HighPassFilter(Step):
             raise ValueError(f"Cutoff {cutoff} Hz must be below half the sample rate ({clip.sr / 2} Hz)")
         # Butterworth 滤波器：通带最平坦，不会给保留下来的频率加起伏
         sos = butter(self.values["order"], cutoff, btype="highpass", fs=clip.sr, output="sos")
+        before = clip.audio
         # sosfiltfilt 正着滤一遍、倒着滤一遍，相位不变（波形不会被"推后"）
         clip.audio = sosfiltfilt(sos, clip.audio, axis=0).astype(np.float32)
+        _record_level_change(clip, before, "highpass_change_db")
         return [clip]
 
 
@@ -143,5 +145,15 @@ class Denoising(Step):
                 stationary=self.values["stationary"] == "stationary",
                 prop_decrease=self.values["strength"],
             )
+        before = clip.audio
         clip.audio = np.asarray(out, dtype=np.float32).reshape(clip.audio.T.shape).T
+        _record_level_change(clip, before, "denoise_change_db")
         return [clip]
+
+
+def _record_level_change(clip: Clip, before: np.ndarray, key: str) -> None:
+    """记下处理后平均电平变了多少 dB（负数 = 变小了）。变化越大，去掉的内容越多。"""
+    old = float(np.sqrt(np.mean(np.square(before, dtype=np.float64)))) if before.size else 0.0
+    new = float(np.sqrt(np.mean(np.square(clip.audio, dtype=np.float64)))) if clip.audio.size else 0.0
+    if old > 0 and new > 0:
+        clip.info[key] = round(to_db(new) - to_db(old), 2)

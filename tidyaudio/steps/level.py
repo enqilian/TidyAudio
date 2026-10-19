@@ -58,27 +58,30 @@ class Normalization(Step):
             clip.info["normalize_skipped"] = "silent"
             return [clip]
 
-        # 第 1 步：按选定的方式算出要调多少 dB
+        # 第 1 步：按选定的方式测出现在的电平，算出要调多少 dB
         if method == "peak":
-            gain_db = self.values["target_peak_db"] - to_db(p)
+            before, target = to_db(p), self.values["target_peak_db"]
         elif method == "rms":
-            gain_db = self.values["target_rms_db"] - to_db(rms(clip.audio))
+            before, target = to_db(rms(clip.audio)), self.values["target_rms_db"]
         else:
-            loudness = self._measure_lufs(clip)
-            if loudness is None:
+            before, target = self._measure_lufs(clip), self.values["target_lufs"]
+            if before is None:
                 return [clip]
-            gain_db = self.values["target_lufs"] - loudness
-            clip.info["loudness_before_lufs"] = round(loudness, 2)
+        gain_db = target - before
 
         # 第 2 步：rms / lufs 可能把峰值推过上限，需要时少调一点
         if method != "peak" and self.values["prevent_clipping"]:
             headroom_db = self.values["peak_ceiling_db"] - to_db(p)
             if gain_db > headroom_db:
-                gain_db = headroom_db
                 clip.info["normalize_limited"] = True   # 没能达到目标值
+                clip.info["normalize_shortfall_db"] = round(float(gain_db - headroom_db), 2)
+                gain_db = headroom_db
 
         clip.audio = (clip.audio * db_to_gain(gain_db)).astype(np.float32)
         clip.info["normalize_gain_db"] = round(float(gain_db), 2)
+        # 处理前后的电平（单位跟着方法走：peak / rms 是 dBFS，lufs 是 LUFS），报告里画对比图
+        clip.info["normalize_before"] = round(float(before), 2)
+        clip.info["normalize_after"] = round(float(before + gain_db), 2)
         return [clip]
 
     @staticmethod

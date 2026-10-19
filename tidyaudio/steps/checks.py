@@ -59,11 +59,12 @@ class DurationFilter(Step):
 
     def apply(self, clip: Clip) -> list[Clip]:
         d = clip.duration
+        clip.info["duration_checked_sec"] = round(d, 3)   # 报告里画"过滤时看到的时长"
         lo, hi = self.values["min_sec"], self.values["max_sec"]
         if d < lo:
-            return drop(clip, f"Too short ({d:.2f}s < {lo}s)")
+            return drop(clip, f"Too short ({_seconds(d, lo)} < {lo}s)")
         if hi > 0 and d > hi:
-            return drop(clip, f"Too long ({d:.2f}s > {hi}s)")
+            return drop(clip, f"Too long ({_seconds(d, hi)} > {hi}s)")
         return [clip]
 
 
@@ -94,6 +95,12 @@ class ClippingDetection(Step):
         if self.values["action"] == "drop" and ratio > self.values["max_ratio"]:
             return drop(clip, f"Heavy clipping ({ratio:.3f}% > {self.values['max_ratio']}%)")
         return [clip]
+
+
+def _seconds(d: float, limit: float) -> str:
+    """时长保留两位小数；如果四舍五入后看起来和界限一样（0.4996 → 0.50），多显示几位。"""
+    text = f"{d:.2f}"
+    return f"{d:.3f}s" if float(text) == limit else f"{text}s"
 
 
 def _longest_run(mask: np.ndarray) -> int:
